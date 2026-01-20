@@ -7,8 +7,6 @@ It opens a browser, waits for you to authenticate via SSO, then downloads all
 available invoices to an output folder.
 """
 
-import os
-import shutil
 import time
 from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -46,18 +44,36 @@ def wait_for_authentication(page):
 def change_date_range(page, date_range: str):
     """Change the date range filter to show more invoices."""
     try:
-        # Click on the date range menu
-        date_menu = page.get_by_role("menuitem", name="Past 3 months")
-        if date_menu.is_visible():
-            date_menu.click()
-            time.sleep(0.5)
+        # Try common date range options that might be currently selected
+        date_options = ["Past 3 months", "Past 6 months", "Past 12 months", "All"]
+        date_menu = None
 
-            # Select the desired date range
-            page.get_by_role("menuitemcheckbox", name=date_range).click()
-            time.sleep(2)  # Wait for the grid to reload
+        for option in date_options:
+            menu = page.get_by_role("menuitem", name=option)
+            if menu.is_visible(timeout=1000):
+                date_menu = menu
+                break
+
+        if date_menu is None:
+            print("Could not find date range menu. Continuing with current selection.")
+            return
+
+        date_menu.click()
+        page.wait_for_timeout(500)
+
+        # Select the desired date range
+        target_option = page.get_by_role("menuitemcheckbox", name=date_range)
+        if target_option.is_visible(timeout=2000):
+            target_option.click()
+            page.wait_for_load_state("networkidle")
             print(f"Date range changed to: {date_range}")
+        else:
+            print(f"Date range option '{date_range}' not found. Using current selection.")
+
+    except PlaywrightTimeoutError:
+        print("Date range menu interaction timed out. Continuing with current selection.")
     except Exception as e:
-        print(f"Could not change date range (may already be set): {e}")
+        print(f"Could not change date range: {e}")
 
 
 def close_dialogs(page):
@@ -67,22 +83,16 @@ def close_dialogs(page):
         if close_btn.is_visible(timeout=2000):
             close_btn.click()
             time.sleep(0.5)
-    except:
+    except PlaywrightTimeoutError:
         pass  # No dialog to close
-
-
-def get_invoice_count(page):
-    """Count the number of invoices in the grid."""
-    rows = page.locator('[aria-label="Invoice grid"] [role="row"]').all()
-    # Subtract 1 for the header row
-    return max(0, len(rows) - 1)
+    except Exception:
+        pass  # Dialog interaction failed, continue anyway
 
 
 def download_all_invoices(page, download_path: Path):
     """Click all download buttons and save the invoices."""
-    # Find all download buttons
-    download_buttons = page.get_by_role("button", name="Download invoice").all()
-    total = len(download_buttons)
+    # Get initial count of download buttons
+    total = page.get_by_role("button", name="Download invoice").count()
 
     if total == 0:
         print("No invoices found to download.")
@@ -91,12 +101,25 @@ def download_all_invoices(page, download_path: Path):
     print(f"Found {total} invoices to download.")
     downloaded = 0
 
-    for i, button in enumerate(download_buttons, 1):
+    for i in range(1, total + 1):
         try:
+            # Re-query buttons each iteration to avoid stale element references
+            # after DOM updates from previous downloads
+            buttons = page.get_by_role("button", name="Download invoice")
+            button = buttons.nth(i - 1)
+
             # Get the invoice ID from the row for naming
             row = button.locator("xpath=ancestor::*[@role='row']")
             row_header = row.locator("[role='rowheader']")
-            invoice_id = row_header.inner_text().split()[0] if row_header.count() > 0 else f"invoice_{i}"
+
+            # Safely extract invoice ID, handling empty text
+            invoice_id = f"invoice_{i}"
+            if row_header.count() > 0:
+                header_text = row_header.inner_text().strip()
+                if header_text:
+                    parts = header_text.split()
+                    if parts:
+                        invoice_id = parts[0]
 
             print(f"[{i}/{total}] Downloading invoice {invoice_id}...")
 
@@ -123,16 +146,28 @@ def download_all_invoices(page, download_path: Path):
                     counter += 1
 
             download.save_as(save_path)
-            print(f"    Saved: {save_path.name}")
+
+            # Verify file was saved successfully
+            if not save_path.exists():
+                print(f"    Warning: File may not have saved correctly: {save_path.name}")
+                continue
+
+            file_size = save_path.stat().st_size
+            if file_size == 0:
+                print(f"    Warning: File is empty: {save_path.name}")
+                save_path.unlink()  # Remove empty file
+                continue
+
+            print(f"    Saved: {save_path.name} ({file_size:,} bytes)")
             downloaded += 1
 
             # Small delay between downloads to avoid overwhelming the server
             time.sleep(1)
 
         except PlaywrightTimeoutError:
-            print(f"    Timeout waiting for download. Skipping...")
+            print(f"    Timeout waiting for download {i}. Skipping...")
         except Exception as e:
-            print(f"    Error: {e}")
+            print(f"    Error downloading invoice {i}: {e}")
 
     return downloaded
 
