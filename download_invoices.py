@@ -188,7 +188,10 @@ def main():
             raise
         finally:
             # Keep browser open for a moment to see results
-            input("\nPress Enter to close the browser...")
+            try:
+                input("\nPress Enter to close the browser...")
+            except EOFError:
+                pass  # Running non-interactively, just close
             context.close()
 
 
