@@ -65,7 +65,7 @@ def change_date_range(page, date_range: str):
         target_option = page.get_by_role("menuitemcheckbox", name=date_range)
         if target_option.is_visible(timeout=2000):
             target_option.click()
-            page.wait_for_load_state("networkidle")
+            time.sleep(2)  # Allow grid to refresh
             print(f"Date range changed to: {date_range}")
         else:
             print(f"Date range option '{date_range}' not found. Using current selection.")
@@ -192,14 +192,17 @@ def main():
 
         try:
             print(f"Navigating to {INVOICE_URL}")
-            page.goto(INVOICE_URL, wait_until="networkidle")
+            page.goto(INVOICE_URL, wait_until="domcontentloaded")
 
             # Check if we need to authenticate
             if "login.microsoftonline.com" in page.url or "login.microsoft.com" in page.url:
                 wait_for_authentication(page)
+            else:
+                # Already authenticated - wait for invoice grid to appear
+                print("Session found, waiting for invoice list to load...")
+                page.wait_for_selector('[aria-label="Invoice grid"]', timeout=60000)
 
-            # Wait for the page to fully load
-            page.wait_for_load_state("networkidle")
+            # Give the page a moment to finish rendering
             time.sleep(2)
 
             # Close any popup dialogs
