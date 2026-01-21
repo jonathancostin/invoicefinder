@@ -20,7 +20,7 @@ A Python script that automates downloading invoices from the Microsoft 365 Admin
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/invoicefinder.git
+git clone https://github.com/jonathancostin/invoicefinder.git
 cd invoicefinder
 
 # Create virtual environment
